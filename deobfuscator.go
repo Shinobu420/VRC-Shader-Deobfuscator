@@ -84,9 +84,7 @@ func Deobfuscate(input []byte) ([]byte, error) {
 		deobfuscatedText += "\n"
 	}
 
-	deobfuscatedText = strings.ReplaceAll(deobfuscatedText, ";", ";\n")
-	deobfuscatedText = strings.ReplaceAll(deobfuscatedText, "{", "{\n")
-	deobfuscatedText = strings.ReplaceAll(deobfuscatedText, "}", "}\n")
+	deobfuscatedText = formatShader(deobfuscatedText)
 
 	return []byte(deobfuscatedText), nil
 }
@@ -115,4 +113,95 @@ func expand(val string, defines map[string]string, visited map[string]bool) stri
 		}
 		return ident
 	})
+}
+
+func splitComment(line string) (code, comment string) {
+	inString := false
+	for i := 0; i < len(line)-1; i++ {
+		if line[i] == '"' && (i == 0 || line[i-1] != '\\') {
+			inString = !inString
+		}
+		if !inString && line[i] == '/' && line[i+1] == '/' {
+			return line[:i], line[i:]
+		}
+	}
+	return line, ""
+}
+
+func formatShader(text string) string {
+	lines := strings.Split(text, "\n")
+	inBlockComment := false
+	var result []string
+
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		if inBlockComment {
+			if strings.Contains(trimmed, "*/") {
+				inBlockComment = false
+			}
+			result = append(result, line)
+			continue
+		}
+		if strings.Contains(trimmed, "/*") {
+			if !strings.Contains(trimmed, "*/") {
+				inBlockComment = true
+			}
+			result = append(result, line)
+			continue
+		}
+
+		if strings.HasPrefix(trimmed, "//") || strings.HasPrefix(trimmed, "#") {
+			result = append(result, line)
+			continue
+		}
+
+		code, comment := splitComment(line)
+		if strings.TrimSpace(code) == "" {
+			result = append(result, line)
+			continue
+		}
+
+		isForLoop := strings.Contains(code, "for") && (strings.Contains(code, "(") || strings.Contains(code, " "))
+
+		var formattedCode string
+		if isForLoop {
+			formattedCode = code
+		} else {
+			var sb strings.Builder
+			for i := 0; i < len(code); i++ {
+				ch := code[i]
+				sb.WriteByte(ch)
+
+				hasMoreCode := func(start int) bool {
+					for j := start; j < len(code); j++ {
+						c := code[j]
+						if c != ' ' && c != '\t' && c != '\r' && c != '\n' {
+							return true
+						}
+					}
+					return false
+				}
+
+				if ch == ';' {
+					if hasMoreCode(i + 1) {
+						sb.WriteByte('\n')
+					}
+				} else if ch == '{' {
+					if hasMoreCode(i + 1) {
+						sb.WriteByte('\n')
+					}
+				} else if ch == '}' {
+					if hasMoreCode(i + 1) {
+						sb.WriteByte('\n')
+					}
+				}
+			}
+			formattedCode = sb.String()
+		}
+
+		result = append(result, formattedCode+comment)
+	}
+
+	return strings.Join(result, "\n")
 }
